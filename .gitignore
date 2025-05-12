@@ -1,0 +1,4 @@
+*.pyv
+*.ipynd_checkpoints
+.env
+*__pycache__/
