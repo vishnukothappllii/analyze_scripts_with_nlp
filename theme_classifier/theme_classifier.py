@@ -7,17 +7,21 @@ import numpy as np
 import os
 import sys
 import pathlib
+import traceback
 
+# Resolve paths
 folder_path = pathlib.Path(__file__).parent.resolve()
 sys.path.append(os.path.join(folder_path, '../'))
+
 from utils import load_subtitles_dataset
 
+# Download required NLTK data
 nltk.download('punkt')
 
 class ThemeClassifier():
     def __init__(self, theme_list):
         self.model_name = "facebook/bart-large-mnli"
-        self.device = 0 if torch.cuda.is_available() else -1  # -1 = CPU for pipeline
+        self.device = 0 if torch.cuda.is_available() else -1  # Use GPU if available
         self.torch_dtype = torch.float16 if self.device == 0 else torch.float32
         self.theme_list = theme_list
         self.theme_classifier = self.load_model()
@@ -38,24 +42,21 @@ class ThemeClassifier():
 
         script_sentences = sent_tokenize(script)
 
-        # Batch Sentence
-        sentence_batch_size = 50  # Increase batch size for speed
+        # Batch sentences
+        sentence_batch_size = 50
         script_batches = [
             " ".join(script_sentences[i:i + sentence_batch_size])
             for i in range(0, len(script_sentences), sentence_batch_size)
         ]
 
-        # TEMPORARY: Limit batches for testing
-        script_batches = script_batches[:2]
-
-        # Run Model
+        # Run model
         theme_output = self.theme_classifier(
             script_batches,
             self.theme_list,
             multi_label=True
         )
 
-        # Wrangle Output
+        # Process output
         themes = {}
         for output in theme_output:
             for label, score in zip(output['labels'], output['scores']):
@@ -64,20 +65,34 @@ class ThemeClassifier():
         themes = {key: np.mean(value) for key, value in themes.items()}
         return themes
 
-    def get_themes(self, dtaset_path, save_path=None):
-        if save_path is not None and os.path.exists(save_path):
-            return pd.read_csv(save_path)
+    def get_themes(self, dataset_path, save_path=None):
+        try:
+            print(f"▶ get_themes started with: {dataset_path}")
+            if save_path:
+                print(f"▶ Will save results to: {save_path}")
 
-        df = load_subtitles_dataset(dtaset_path)
+            # Return cached results if available
+            if save_path is not None and os.path.exists(save_path):
+                print("ℹ️ Using cached CSV result.")
+                return pd.read_csv(save_path)
 
-        # TEMPORARY: For testing, only a few rows
-        df = df.head(2)
+            # Load dataset
+            df = load_subtitles_dataset(dataset_path)
+            print(f"✅ Loaded {len(df)} subtitle rows")
 
-        output_themes = df['script'].apply(self.get_themes_inference)
-        themes_df = pd.DataFrame(output_themes.tolist())
-        df = pd.concat([df, themes_df], axis=1)
+            # Run inference
+            output_themes = df['script'].apply(self.get_themes_inference)
+            themes_df = pd.DataFrame(output_themes.tolist())
+            df = pd.concat([df, themes_df], axis=1)
 
-        if save_path is not None:
-            df.to_csv(save_path, index=False)
+            # Save results
+            if save_path is not None:
+                df.to_csv(save_path, index=False)
+                print(f"✅ Saved themes to: {save_path}")
 
-        return df
+            return df
+
+        except Exception as e:
+            print("❌ Exception in get_themes():")
+            traceback.print_exc()
+            raise
